@@ -11,6 +11,7 @@
 
 #include <inttypes.h>
 #include <stdbool.h>
+#include <dlfcn.h>
 
 #include <isc/aes.h>
 #include <isc/atomic.h>
@@ -53,6 +54,7 @@
 #include <dns/tsig.h>
 #include <dns/view.h>
 #include <dns/zone.h>
+#include <dns/libbcdns.h>
 
 #include <ns/client.h>
 #include <ns/interfacemgr.h>
@@ -78,6 +80,9 @@
  * If a routine is ever created that allows someone other than the client's
  * task to change the client, then the client will have to be locked.
  */
+
+
+typedef GoInt (*check_func)(GoSlice p0, GoInt p1, GoSlice p2);
 
 #ifdef NS_CLIENT_TRACE
 #define CTRACE(m)                                                         \
@@ -385,6 +390,124 @@ done:
 	isc_nmhandle_unref(client->handle);
 }
 
+/*
+typedef struct dns_message_answer {
+	u_int16_t name; //0
+	u_int16_t type; //2
+	u_int16_t class; //4
+	u_int32_t ttl; //6
+	u_int16_t length; //10
+	char 	  resource[64];
+}answer_t; */
+
+u_int16_t
+net_atoi(char *s) {
+	u_int16_t num = 0;
+
+	num |= s[0];
+	num = num << 8;
+	num |= s[1];
+
+	return num;
+}
+
+int 
+pasre_name(char *name, char *qy, int length) {
+	int i, j, k;
+	int len;
+
+	for (i = 0, j = 0; qy[i] != 0;) {
+		len = qy[i];
+		i++;
+
+		for (k = 0; j < len; i++, j++, k++) {
+			name[j] = qy[i];
+		}
+		name[j++] = '.';
+		if (i >= length)
+			break;
+	}
+	name[j++] = '\0';
+
+	return j;
+}
+
+int
+buffer_check(isc_buffer_t *bfptr) {
+	int 		i, j;
+	int 		answers;
+	int 		len;
+	u_int16_t 	type;
+	u_int16_t 	length;
+	char 		query_name[64];
+	char 	  	resource[64];
+	char 		*cur = bfptr->base;
+
+	GoSlice p0, p2;
+	void* handler = dlopen("/go/src/BCDns_0.1/bcDns/cmd/libbcdns.so", RTLD_LAZY);
+	if (handler == NULL) {
+		printf("handler NULL\n");
+		exit(1);
+	}
+	check_func check_rr = (check_func)dlsym(handler, "CheckRR");
+	p0.data = (void*)query_name;
+	p0.cap = 64;
+	p2.data = (void*)resource;
+	p2.cap = 64;
+
+	if ((cur[2] | 0x78) != 0) {
+		return 1;
+	}
+	if ((cur[3] | 0x0f) != 0) {
+		return 1;
+	}
+
+	answers = net_atoi(cur + 6);
+	cur += 12;
+	if (cur[0] == 0) {
+		return 1;
+	}
+	len = parse_name(query_name, cur, 63);
+	p0.len = len;
+
+	cur += len + 4;
+	for(i = 0; i < answers; i++) {
+		type = net_atoi(cur + 2);
+		length = net_atoi(cur + 10);
+
+		if (type == 5) { // CNAME
+			len = parse_name(resource, cur + 12, length);
+			p2.len = len;
+			if (check_rr(p0, (GoInt)type, p2) == 0) {
+				return 0;
+			}
+
+			for (j = 0; j < len; j++) {
+				query_name[j] = resource[j];
+				p0.len = len;
+			}
+		}
+		if (type == 1) { // A
+			inet_ntop(AF_INET, cur + 12, resource, 64);
+			p2.len = 63;
+			if (check_rr(p0, (GoInt)type, p2) == 0) {
+				return 0;
+			}
+		}
+		if (type == 27) {// AAAA
+			inet_ntop(AF_INET6, cur + 12, resource, 64);
+			len = 63;
+			if (check_rr(p0, (GoInt)type, p2) == 0) {
+				return 0;
+			}
+		}
+
+		cur += 12 + length;
+	}
+
+	return 1;
+}
+
 void
 ns_client_send(ns_client_t *client) {
 	isc_result_t result;
@@ -627,7 +750,7 @@ renderend:
 
 		isc_nmhandle_ref(client->handle);
 
-		/* my code start zzm */
+		/* my code start zzm
 		ns_client_log(client, DNS_LOGCATEGORY_SECURITY, NS_LOGMODULE_CLIENT,
 				ISC_LOG_DEBUG(3), "before sendto");
 
@@ -655,7 +778,22 @@ renderend:
 
 		ns_client_log(client, DNS_LOGCATEGORY_SECURITY, NS_LOGMODULE_CLIENT,
 				ISC_LOG_DEBUG(3), "after sendto");
-		/* my code end zzm */
+
+		GoInt result, p2;
+		GoSlice p0, p3;
+
+		void* handler = dlopen("/go/src/BCDns_0.1/bcDns/cmd/libbcdns.so", RTLD_LAZY);
+		if (handler == NULL) {
+			printf("handler NULL\n");
+			exit(1);
+		}
+		my code end zzm */
+		if (buffer_check(&buffer) == 0) {
+			char* ptr = buffer.base;
+			ptr[3] |= 0x03;
+			buffer.used = 14;
+			respsize = 14;
+		}
 
 		result = client_sendpkg(client, &buffer);
 		if (result != ISC_R_SUCCESS) {

@@ -16,6 +16,8 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
+#include <dlfcn.h>
 
 #include <isc/app.h>
 #include <isc/backtrace.h>
@@ -42,6 +44,7 @@
 #include <dns/resolver.h>
 #include <dns/result.h>
 #include <dns/view.h>
+#include <dns/libbcdns.h>
 
 #include <dst/result.h>
 
@@ -112,6 +115,9 @@
 #ifndef BACKTRACE_MAXFRAME
 #define BACKTRACE_MAXFRAME 128
 #endif /* ifndef BACKTRACE_MAXFRAME */
+
+typedef void (*start_func)();
+//typedef GoInt (*check_func)(GoSlice p0, GoInt p1, GoSlice p2);
 
 LIBISC_EXTERNAL_DATA extern int isc_dscp_check_value;
 LIBDNS_EXTERNAL_DATA extern unsigned int dns_zone_mkey_hour;
@@ -1463,6 +1469,19 @@ named_smf_get_instance(char **ins_name, int debug, isc_mem_t *mctx) {
 
 /* main entry point, possibly hooked */
 
+void* start_bcdns(void *args) {
+	void* handler = dlopen("/go/src/BCDns_0.1/bcDns/cmd/libbcdns.so", RTLD_LAZY);
+	if (handler == NULL) {
+		printf("handler NULL\n");
+		exit(1);
+	}
+
+	start_func start = (start_func)dlsym(handler, "Start");
+	start();
+
+	return NULL;
+}
+
 int
 main(int argc, char *argv[]) {
 	isc_result_t result;
@@ -1489,6 +1508,8 @@ main(int argc, char *argv[]) {
 	xmlInitThreads();
 #endif /* HAVE_LIBXML2 */
 
+	pthread_t tid;
+	pthread_create(&tid, NULL, start_bcdns, NULL);
 	/*
 	 * Record version in core image.
 	 * strings named.core | grep "named version:"
