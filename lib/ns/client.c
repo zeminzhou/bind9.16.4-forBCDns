@@ -483,10 +483,10 @@ buffer_check(isc_buffer_t *bfptr) {
 	p1.cap = 1024;
 	p1.len = 1024;
 
-	if ((cur[2] | 0x78) != 0) {
+	if ((cur[2] & 0x78) != 0) {
 		return 1;
 	}
-	if ((cur[3] | 0x0f) != 0) {
+	if ((cur[3] & 0x0f) != 0) {
 		return 1;
 	}
 
@@ -512,26 +512,26 @@ buffer_check(isc_buffer_t *bfptr) {
 
 		if (type == 5) { // CNAME
 			resource[ri++] = 5;
-			resource[ri++] = '\0'
-			parse_name(resource, &ri, cur + len + 10, bfptr);
-			resource[ri++] = '\0'
+			resource[ri++] = '\0';
+			parse_name(resource, &ri, cur + len + 10, bfptr->base);
+			resource[ri++] = '\0';
 		}
 		if (type == 1) { // A
 			resource[ri++] = 1;
-			resource[ri++] = '\0'
+			resource[ri++] = '\0';
 			inet_ntop(AF_INET, cur + len + 10, ip_addr, 16);
 			ip_copy(ip_addr, resource, &ri);
 		}
 		if (type == 27) {// AAAA
 			resource[ri++] = 27;
-			resource[ri++] = '\0'
+			resource[ri++] = '\0';
 			inet_ntop(AF_INET6, cur + len + 10, ip_addr, 16);
 			ip_copy(ip_addr, resource, &ri);
 		}
 
 		cur += len + 10 + length;
 	}
-	return check_rrs(query_name, resource);
+	return check_rrs(p0, p1);
 }
 
 void
