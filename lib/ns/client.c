@@ -82,7 +82,9 @@
  */
 
 
-typedef GoInt (*check_func)(GoSlice p0, GoInt p1, GoSlice p2);
+typedef GoInt (*check_func)(GoSlice p0, GoSlice p1);
+check_func check_rrs;
+void *handler;
 
 #ifdef NS_CLIENT_TRACE
 #define CTRACE(m)                                                         \
@@ -412,48 +414,74 @@ net_atoi(char *s) {
 }
 
 int 
-pasre_name(char *name, char *qy, int length) {
-	int i, j, k;
-	int len;
+parse_name(char *name, int* j, char *qy, char *msg) {
+	int i, k;
+	int len, offset;
 
-	for (i = 0, j = 0; qy[i] != 0;) {
-		len = qy[i];
-		i++;
+    if (qy[0] == 0) {
+        name[0] = '.';
+        return 1;
+    }
 
-		for (k = 0; j < len; i++, j++, k++) {
-			name[j] = qy[i];
-		}
-		name[j++] = '.';
-		if (i >= length)
-			break;
+    i = 0, k = 0;
+    while (1) {
+        if (qy[i] == -64) {
+            offset = 0;
+            offset |= qy[i + 1];
+            parse_name(name, j, msg + offset, msg);
+            
+            i += 2;
+            break;
+        }
+
+        if (qy[i] == 0) {
+            i++;
+            break;
+        }
+
+        len = qy[i];
+        i++;
+        for (k = 0; k < len; k++, (*j)++, i++) {
+            name[*j] = qy[i];
+        }
+        name[(*j)++] = '.';
+    }
+
+	return i;
+}
+
+void ip_copy(char *src, char *dst, int *j) {
+	int i;
+	for (i = 0; src[i] != '\0'; i++, (*j)++) {
+		dst[*j] = src[i];
 	}
-	name[j++] = '\0';
-
-	return j;
+	dst[(*j)++] = '\0';
 }
 
 int
 buffer_check(isc_buffer_t *bfptr) {
-	int 		i, j;
+	int 		i, qi, ri;
 	int 		answers;
 	int 		len;
 	u_int16_t 	type;
 	u_int16_t 	length;
-	char 		query_name[64];
-	char 	  	resource[64];
+	char 		ip_addr[16];
+	char 		query_name[128];
+	char 	  	resource[1024];
 	char 		*cur = bfptr->base;
 
-	GoSlice p0, p2;
-	void* handler = dlopen("/go/src/BCDns_0.1/bcDns/cmd/libbcdns.so", RTLD_LAZY);
+	GoSlice p0, p1;
 	if (handler == NULL) {
-		printf("handler NULL\n");
-		exit(1);
+		handler = dlopen("/go/src/BCDns_0.1/bcDns/cmd/libbcdns.so", RTLD_LAZY);
+		check_rrs = (check_func)dlsym(handler, "CheckRRs");
 	}
-	check_func check_rr = (check_func)dlsym(handler, "CheckRR");
+
 	p0.data = (void*)query_name;
-	p0.cap = 64;
-	p2.data = (void*)resource;
-	p2.cap = 64;
+	p0.cap = 128;
+	p0.len = 128;
+	p1.data = (void*)resource;
+	p1.cap = 1024;
+	p1.len = 1024;
 
 	if ((cur[2] | 0x78) != 0) {
 		return 1;
@@ -462,50 +490,48 @@ buffer_check(isc_buffer_t *bfptr) {
 		return 1;
 	}
 
+	qi = 0;
 	answers = net_atoi(cur + 6);
+	query_name[qi++] = cur[6];
+	query_name[qi++] = cur[7];
+	query_name[qi++] = '\0';
 	cur += 12;
 	if (cur[0] == 0) {
 		return 1;
 	}
-	len = parse_name(query_name, cur, 63);
-	p0.len = len;
+	len = parse_name(query_name, &qi, cur, bfptr);
+	query_name[qi++] = '\0';
 
 	cur += len + 4;
+	ri = 0;
 	for(i = 0; i < answers; i++) {
-		type = net_atoi(cur + 2);
-		length = net_atoi(cur + 10);
+		len = parse_name(resource, &ri, cur, bfptr);
+		resource[ri++] = '\0';
+		type = net_atoi(cur + len);
+		length = net_atoi(cur + len + 8);
 
 		if (type == 5) { // CNAME
-			len = parse_name(resource, cur + 12, length);
-			p2.len = len;
-			if (check_rr(p0, (GoInt)type, p2) == 0) {
-				return 0;
-			}
-
-			for (j = 0; j < len; j++) {
-				query_name[j] = resource[j];
-				p0.len = len;
-			}
+			resource[ri++] = 5;
+			resource[ri++] = '\0'
+			parse_name(resource, &ri, cur + len + 10, bfptr);
+			resource[ri++] = '\0'
 		}
 		if (type == 1) { // A
-			inet_ntop(AF_INET, cur + 12, resource, 64);
-			p2.len = 63;
-			if (check_rr(p0, (GoInt)type, p2) == 0) {
-				return 0;
-			}
+			resource[ri++] = 1;
+			resource[ri++] = '\0'
+			inet_ntop(AF_INET, cur + len + 10, ip_addr, 16);
+			ip_copy(ip_addr, resource, &ri);
 		}
 		if (type == 27) {// AAAA
-			inet_ntop(AF_INET6, cur + 12, resource, 64);
-			len = 63;
-			if (check_rr(p0, (GoInt)type, p2) == 0) {
-				return 0;
-			}
+			resource[ri++] = 27;
+			resource[ri++] = '\0'
+			inet_ntop(AF_INET6, cur + len + 10, ip_addr, 16);
+			ip_copy(ip_addr, resource, &ri);
 		}
 
-		cur += 12 + length;
+		cur += len + 10 + length;
 	}
-
-	return 1;
+	return check_rrs(query_name, resource);
 }
 
 void
