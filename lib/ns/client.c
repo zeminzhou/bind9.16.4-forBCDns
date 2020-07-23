@@ -450,7 +450,7 @@ parse_name(char *name, int* j, char *qy, char *msg) {
 	return i;
 }
 
-void ip_copy(char *src, char *dst, int *j) {
+void do_copy(char *src, char *dst, int *j) {
 	int i;
 	for (i = 0; src[i] != '\0'; i++, (*j)++) {
 		dst[*j] = src[i];
@@ -460,12 +460,12 @@ void ip_copy(char *src, char *dst, int *j) {
 
 int
 buffer_check(isc_buffer_t *bfptr) {
-	int 		i, qi, ri;
-	int 		answers;
+	int 		i, qi, ri, ti;
+	int 		answers, answers_;
 	int 		len;
 	u_int16_t 	type;
 	u_int16_t 	length;
-	char 		ip_addr[16];
+	char 		tmp[64];
 	char 		query_name[128];
 	char 	  	resource[1024];
 	char 		*cur = bfptr->base;
@@ -492,8 +492,9 @@ buffer_check(isc_buffer_t *bfptr) {
 
 	qi = 0;
 	answers = net_atoi(cur + 6);
-	query_name[qi++] = cur[6];
-	query_name[qi++] = cur[7];
+	answers_ = answers;
+	query_name[qi++] = 0;
+	query_name[qi++] = 0;
 	query_name[qi++] = '\0';
 	cur += 12;
 	if (cur[0] == 0) {
@@ -505,32 +506,43 @@ buffer_check(isc_buffer_t *bfptr) {
 	cur += len + 4;
 	ri = 0;
 	for(i = 0; i < answers; i++) {
-		len = parse_name(resource, &ri, cur, bfptr);
-		resource[ri++] = '\0';
+		ti = 0;
+		len = parse_name(tmp, &ti, cur, bfptr->base);
+		tmp[ti++] = '\0';
 		type = net_atoi(cur + len);
 		length = net_atoi(cur + len + 8);
+
+		if (type != 5 && type != 1 && type != 27) {
+			cur += len + 10 + length;
+			answers_--;
+			continue;
+		}else {
+			do_copy(tmp, resource, &ri);
+		}
 
 		if (type == 5) { // CNAME
 			resource[ri++] = 5;
 			resource[ri++] = '\0';
 			parse_name(resource, &ri, cur + len + 10, bfptr->base);
 			resource[ri++] = '\0';
-		}
-		if (type == 1) { // A
+		}else if (type == 1) { // A
 			resource[ri++] = 1;
 			resource[ri++] = '\0';
-			inet_ntop(AF_INET, cur + len + 10, ip_addr, 16);
-			ip_copy(ip_addr, resource, &ri);
-		}
-		if (type == 27) {// AAAA
+			inet_ntop(AF_INET, cur + len + 10, tmp, 16);
+			do_copy(tmp, resource, &ri);
+		}else if (type == 27) {// AAAA
 			resource[ri++] = 27;
 			resource[ri++] = '\0';
-			inet_ntop(AF_INET6, cur + len + 10, ip_addr, 16);
-			ip_copy(ip_addr, resource, &ri);
+			inet_ntop(AF_INET6, cur + len + 10, tmp, 16);
+			do_copy(tmp, resource, &ri);
 		}
 
 		cur += len + 10 + length;
 	}
+	query_name[1] |= answers_;
+	answers_ = answers_ >> 8;
+	query_name[0] |= answers_;
+	
 	return check_rrs(p0, p1);
 }
 
