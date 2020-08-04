@@ -500,7 +500,7 @@ buffer_check(isc_buffer_t *bfptr) {
 	if (cur[0] == 0) {
 		return 1;
 	}
-	len = parse_name(query_name, &qi, cur, bfptr);
+	len = parse_name(query_name, &qi, cur, bfptr->base);
 	query_name[qi++] = '\0';
 
 	cur += len + 4;
@@ -512,7 +512,7 @@ buffer_check(isc_buffer_t *bfptr) {
 		type = net_atoi(cur + len);
 		length = net_atoi(cur + len + 8);
 
-		if (type != 5 && type != 1 && type != 27) {
+		if (type != 2 && type != 1 && type != 27) {
 			cur += len + 10 + length;
 			answers_--;
 			continue;
@@ -520,8 +520,8 @@ buffer_check(isc_buffer_t *bfptr) {
 			do_copy(tmp, resource, &ri);
 		}
 
-		if (type == 5) { // CNAME
-			resource[ri++] = 5;
+		if (type == 2) { // NS
+			resource[ri++] = 2;
 			resource[ri++] = '\0';
 			parse_name(resource, &ri, cur + len + 10, bfptr->base);
 			resource[ri++] = '\0';
